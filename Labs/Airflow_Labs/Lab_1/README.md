@@ -1,338 +1,190 @@
-# Airflow lab
+# Airflow Lab 1 (Modified): Validated Multi-Model Customer Segmentation Pipeline
 
-- In order to install Airflow using docker you can watch our [Airflow Lab1 Tutorial Video](https://youtu.be/exFSeGUbn4Q?feature=shared)
-- For latest step-by-step instructions, check out this blog - [AirFlow Lab-1](https://www.mlwithramin.com/blog/airflow-lab1)
+This lab builds on the course's Airflow Lab 1 (KMeans clustering on credit card customer data). The original DAG ran four tasks in a straight line:
 
-### ML Model
-
-This script is designed for data clustering using K-Means clustering and determining the optimal number of clusters using the elbow method. It provides functionality to load data from a CSV file, perform data preprocessing, build and save a K-Means clustering model, and determine the number of clusters based on the elbow method.
-
-#### Prerequisites
-
-Before using this script, make sure you have the following libraries installed:
-
-- pandas
-- scikit-learn (sklearn)
-- kneed
-- pickle
-
-#### Usage
-
-You can use this script to perform K-Means clustering on your dataset as follows:
-
-```python
-# Load the data
-data = load_data()
-
-# Preprocess the data
-preprocessed_data = data_preprocessing(data)
-
-# Build and save the clustering model
-sse_values = build_save_model(preprocessed_data, 'clustering_model.pkl')
-
-# Load the saved model and determine the number of clusters
-result = load_model_elbow('clustering_model.pkl', sse_values)
-print(result)
 ```
-
-#### Functions
-
-1. **load_data():**
-   - *Description:* Loads data from a CSV file, serializes it, and returns the serialized data.
-   - *Usage:*
-     ```python
-     data = load_data()
-     ```
-
-2. **data_preprocessing(data)**
-   - *Description:* Deserializes data, performs data preprocessing, and returns serialized clustered data.
-   - *Usage:*
-     ```python
-     preprocessed_data = data_preprocessing(data)
-     ```
-
-3. **build_save_model(data, filename)**
-   - *Description:* Builds a K-Means clustering model, saves it to a file, and returns SSE values.
-   - *Usage:*
-     ```python
-     sse_values = build_save_model(preprocessed_data, 'clustering_model.pkl')
-     ```
-
-4. **load_model_elbow(filename, sse)**
-   - *Description:* Loads a saved K-Means clustering model and determines the number of clusters using the elbow method.
-   - *Usage:*
-     ```python
-     result = load_model_elbow('clustering_model.pkl', sse_values)
-     ```
-### Airflow Setup
-
-Use Airflow to author workflows as directed acyclic graphs (DAGs) of tasks. The Airflow scheduler executes your tasks on an array of workers while following the specified dependencies.
-
-References
-
--   Product - https://airflow.apache.org/
--   Documentation - https://airflow.apache.org/docs/
--   Github - https://github.com/apache/airflow
-
-#### Installation
-
-Prerequisites: You should allocate at least 4GB memory for the Docker Engine (ideally 8GB).
-
-Local
-
--   Docker Desktop Running
-
-Cloud
-
--   Linux VM
--   SSH Connection
--   Installed Docker Engine - [Install using the convenience script](https://docs.docker.com/engine/install/ubuntu/#install-using-the-convenience-script)
-
-#### Tutorial
-
-1. Create a new directory
-
-    ```bash
-    mkdir -p ~/app
-    cd ~/app
-    ```
-
-2. Running Airflow in Docker - [Refer](https://airflow.apache.org/docs/apache-airflow/stable/howto/docker-compose/index.html#running-airflow-in-docker)
-
-    a. You can check if you have enough memory by running this command
-
-    ```bash
-    docker run --rm "debian:bullseye-slim" bash -c 'numfmt --to iec $(echo $(($(getconf _PHYS_PAGES) * $(getconf PAGE_SIZE))))'
-    ```
-
-    b. Fetch [docker-compose.yaml](https://airflow.apache.org/docs/apache-airflow/2.5.1/docker-compose.yaml)
-
-    ```bash
-    curl -LfO 'https://airflow.apache.org/docs/apache-airflow/2.5.1/docker-compose.yaml'
-    ```
-
-    c. Setting the right Airflow user
-
-    ```bash
-    mkdir -p ./dags ./logs ./plugins ./working_data
-    echo -e "AIRFLOW_UID=$(id -u)" > .env
-    ```
-
-    d. Update the following in docker-compose.yml
-
-    ```bash
-    # Donot load examples
-    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
-
-    # Additional python package
-    _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:- pandas }
-
-    # Output dir
-    - ${AIRFLOW_PROJ_DIR:-.}/working_data:/opt/airflow/working_data
-
-    # Change default admin credentials
-    _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow2}
-    _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow2}
-    ```
-
-    e. Initialize the database
-
-    ```bash
-    docker compose up airflow-init
-    ```
-
-    f. Running Airflow
-
-    ```bash
-    docker compose up
-    ```
-
-    Wait until terminal outputs
-
-    `app-airflow-webserver-1  | 127.0.0.1 - - [17/Feb/2023:09:34:29 +0000] "GET /health HTTP/1.1" 200 141 "-" "curl/7.74.0"`
-
-    g. Enable port forwarding
-
-    h. Visit `localhost:8080` login with credentials set on step `2.d`
-
-3. Explore UI and add user `Security > List Users`
-
-4. Create a python script [`dags/sandbox.py`](dags/sandbox.py)
-
-    - BashOperator
-    - PythonOperator
-    - Task Dependencies
-    - Params
-    - Crontab schedules
-
-    You can have n number of scripts inside dags dir
-
-5. Stop docker containers
-
-    ```bash
-    docker compose down
-    ```
-### Airflow DAG Script
-
-This Markdown file provides a detailed explanation of the Python script that defines an Airflow Directed Acyclic Graph (DAG) for a data processing and modeling workflow.
-
-#### Script Overview
-
-The script defines an Airflow DAG named `your_python_dag` that consists of several tasks. Each task represents a specific operation in a data processing and modeling workflow. The script imports necessary libraries, sets default arguments for the DAG, creates PythonOperators for each task, defines task dependencies, and provides command-line interaction with the DAG.
-
-#### Importing Libraries
-
-```python
-# Import necessary libraries and modules
-from airflow import DAG
-from airflow.operators.python_operator import PythonOperator
-from datetime import datetime, timedelta
-from src.lab import load_data, data_preprocessing, build_save_model, load_model_elbow
-from airflow import configuration as conf
-```
-The script starts by importing the required libraries and modules. Notable imports include the `DAG` and `PythonOperator` classes from the `airflow` package, datetime manipulation functions, and custom functions from the `src.lab` module.
-
-
-
-#### Enable pickle support for XCom, allowing data to be passed between tasks
-```python
-conf.set('core', 'enable_xcom_pickling', 'True')
-```
-
-#### Define default arguments for your DAG
-```python
-default_args = {
-    'owner': 'your_name',
-    'start_date': datetime(2023, 9, 17),
-    'retries': 0,  # Number of retries in case of task failure
-    'retry_delay': timedelta(minutes=5),  # Delay before retries
-}
-```
-Default arguments for the DAG are specified in a dictionary named default_args. These arguments include the DAG owner's name, the start date, the number of retries, and the retry delay in case of task failure.
-
-#### Create a DAG instance named 'your_python_dag' with the defined default arguments
-``` python 
-dag = DAG(
-    'your_python_dag',
-    default_args=default_args,
-    description='Your Python DAG Description',
-    schedule_interval=None,  # Set the schedule interval or use None for manual triggering
-    catchup=False,
-)
-```
-Here, the DAG object dag is created with the name 'your_python_dag' and the specified default arguments. The description provides a brief description of the DAG, and schedule_interval defines the execution schedule (in this case, it's set to None for manual triggering). catchup is set to False to prevent backfilling of missed runs.
-
-
-#### Task to load data, calls the 'load_data' Python function
-``` python 
-load_data_task = PythonOperator(
-    task_id='load_data_task',
-    python_callable=load_data,
-    dag=dag,
-)
-```
-
-#### Task to perform data preprocessing, depends on 'load_data_task'
-```python 
-data_preprocessing_task = PythonOperator(
-    task_id='data_preprocessing_task',
-    python_callable=data_preprocessing,
-    op_args=[load_data_task.output],
-    dag=dag,
-)
-```
-The 'data_preprocessing_task' depends on the 'load_data_task' and calls the data_preprocessing function, which is provided with the output of the 'load_data_task'.
-
-#### Task to build and save a model, depends on 'data_preprocessing_task'
-```python
-build_save_model_task = PythonOperator(
-    task_id='build_save_model_task',
-    python_callable=build_save_model,
-    op_args=[data_preprocessing_task.output, "model.sav"],
-    provide_context=True,
-    dag=dag,
-)
-```
-The 'build_save_model_task' depends on the 'data_preprocessing_task' and calls the build_save_model function. It also provides additional context information and arguments.
-
-#### Task to load a model using the 'load_model_elbow' function, depends on 'build_save_model_task'
-``` python
-load_model_task = PythonOperator(
-    task_id='load_model_task',
-    python_callable=load_model_elbow,
-    op_args=["model.sav", build_save_model_task.output],
-    dag=dag,
-)
-```
-The 'load_model_task' depends on the 'build_save_model_task' and calls the load_model_elbow function with specific arguments.
-
-#### Set task dependencies
-```python
 load_data_task >> data_preprocessing_task >> build_save_model_task >> load_model_task
 ```
-Task dependencies are defined using the >> operator. In this case, the tasks are executed in sequence: 'load_data_task' -> 'data_preprocessing_task' -> 'build_save_model_task' -> 'load_model_task'.
 
-#### If this script is run directly, allow command-line interaction with the DAG
-```python
-if __name__ == "__main__":
-    dag.cli()
+All four original tasks are **kept**. I extended the **orchestration logic itself** around them, so the DAG now has these features:
+
+- It **validates the data** and **branches**: training runs only if the data passes the checks. Otherwise an alert task runs.
+- It **trains three clustering algorithms in parallel** inside a TaskGroup.
+- It **automatically picks the best model** using the silhouette score.
+- A **quality gate** branches again and promotes the model to "production" only if it is good enough.
+- It **always writes a final JSON report**, whichever path the run took.
+- It uses **retries, a failure callback, and runtime parameters** that you can change when you trigger the DAG.
+
+---
+
+## 1. Pipeline overview
+
+```mermaid
+flowchart LR
+    start --> load_data_task --> validate_data_task
+    validate_data_task -- pass --> data_preprocessing_task
+    validate_data_task -- fail --> data_quality_alert
+    data_preprocessing_task --> build_save_model_task & train_minibatch_kmeans & train_gmm
+    subgraph train_models [TaskGroup: train_models]
+        build_save_model_task --> load_model_task
+        train_minibatch_kmeans
+        train_gmm
+    end
+    load_model_task & train_minibatch_kmeans & train_gmm --> select_best_model_task --> quality_gate_task
+    quality_gate_task -- silhouette >= threshold --> promote_model
+    quality_gate_task -- silhouette < threshold --> reject_model
+    data_quality_alert & promote_model & reject_model --> generate_report
 ```
-- Lastly, the script allows for command-line interaction with the DAG. When the script is run directly, the dag.cli() function is called, providing the ability to trigger and manage the DAG from the command line.
-- This script defines a comprehensive Airflow DAG for a data processing and modeling workflow, with clear task dependencies and default arguments.
 
-### Running an Apache Airflow DAG Pipeline in Docker
+Tasks from the original lab: `load_data_task`, `data_preprocessing_task`, `build_save_model_task`, `load_model_task`. Every other task is new.
 
-This guide provides detailed steps to set up and run an Apache Airflow Directed Acyclic Graph (DAG) pipeline within a Docker container using Docker Compose. The pipeline is named "your_python_dag."
+---
 
-#### Prerequisites
+## 2. Changes I made
 
-- Docker: Make sure Docker is installed and running on your system.
+| # | Change | File | What it does / why it matters |
+|---|--------|------|-------------------------------|
+| 1 | **Data validation + branching** (`BranchPythonOperator`) | `dags/airflow.py`, `validate_data()` in `dags/src/lab.py` | Checks for the required columns, a minimum row count, and the null ratio. If the data fails, the DAG skips training and runs `data_quality_alert`, so a model is never trained on bad data. |
+| 2 | **Parallel training in a TaskGroup** | `dags/airflow.py`, `train_minibatch_kmeans()`, `train_gmm()` | The original KMeans task (`build_save_model_task`, followed by the elbow method in `load_model_task`) now runs **at the same time** as two new algorithms: MiniBatchKMeans and a Gaussian Mixture model. Each one searches k = 2–8. |
+| 3 | **Automatic model selection** | `select_best_model()` | Pulls all three results from XCom and picks the model with the highest silhouette score. The original elbow result is still computed and is included in the final report for comparison. |
+| 4 | **Quality gate (second branch)** | `quality_gate()`, `promote_model()`, `reject_model()` | The best model is copied to `model/production_model.sav`, with a metadata JSON, **only** if its silhouette score is at least the threshold. Otherwise it is rejected and the production model stays unchanged. |
+| 5 | **Trigger rule for the join** | `generate_report` task | Uses `none_failed_min_one_success`, so the final report runs no matter which branch was taken. |
+| 6 | **Runtime parameters** | `params` in the DAG | `min_rows`, `max_null_ratio`, and `silhouette_threshold` can be changed from the UI with **Trigger DAG w/ config**, with no code edits. |
+| 7 | **Reliability** | `default_args` | 2 retries with a 1-minute delay, plus an `on_failure_callback` that logs which task failed. |
+| 8 | **JSON-safe XCom** | `dags/src/lab.py` | Data moves between tasks as JSON instead of pickled objects, so XCom pickling no longer has to be enabled. |
+| 9 | **Preprocessing** | `data_preprocessing()` | Uses `StandardScaler` instead of `MinMaxScaler`, and saves the scaler to `model/scaler.sav`. |
 
-#### Step 1: Directory Structure
+---
 
-Ensure your project has the following directory structure:
+## 3. Prerequisites (install these first)
 
-```plaintext
-your_airflow_project/
+| Tool | Version I used | Where to get it |
+|------|----------------|-----------------|
+| Git | 2.42+ | https://git-scm.com |
+| Docker Desktop | 4.x (with **WSL 2** on Windows), running Airflow image **2.9.2** | https://www.docker.com/products/docker-desktop |
+| A web browser | any | |
+
+You do **not** need to install Python or Airflow on your machine, because everything runs inside Docker.
+
+Docker needs **at least 4 GB of memory**, and 8 GB is recommended. On Windows with WSL 2, Docker uses the memory available to WSL.
+
+---
+
+## 4. Setup
+
+```bash
+# 1. Clone the repo
+git clone https://github.com/Praniti03/MLOps.git
+cd MLOps/Labs/Airflow_Labs/Lab_1
+
+# 2. (Only if docker-compose.yaml is missing) download Airflow 2.9.2's compose file
+#    Windows:     curl -o docker-compose.yaml https://airflow.apache.org/docs/apache-airflow/2.9.2/docker-compose.yaml
+#    Mac/Linux:   curl -LfO 'https://airflow.apache.org/docs/apache-airflow/2.9.2/docker-compose.yaml'
+
+# 3. Create the folders Airflow mounts
+mkdir logs plugins config working_data     # ignore "already exists" messages
+
+# 4. Tell Airflow which user ID to run as
+#    Windows (Command Prompt):
+echo AIRFLOW_UID=50000> .env
+#    Mac/Linux:
+# echo -e "AIRFLOW_UID=$(id -u)" > .env
+```
+
+Then check these lines in `docker-compose.yaml` (the same edits as in the original lab's instructions):
+
+```yaml
+AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+_PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:- pandas scikit-learn kneed}
+_AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow2}
+_AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow2}
+# under volumes:
+- ${AIRFLOW_PROJ_DIR:-.}/working_data:/opt/airflow/working_data
+```
+
+The Python packages are installed inside the containers, so there's no `requirements.txt` to install locally. Built for **Airflow 2.9.2** (the version used in the course blog).
+
+---
+
+## 5. Run the pipeline
+
+1. **Start Docker Desktop** and wait for "Engine running".
+2. **Initialize Airflow** (first time only):
+   ```bash
+   docker compose up airflow-init
+   ```
+   Wait until it exits with code 0.
+3. **Start Airflow:**
+   ```bash
+   docker compose up
+   ```
+   Leave this terminal open. Airflow is ready when the logs show the webserver answering `/health` requests with status `200`.
+4. Open **http://localhost:8080** and log in with **airflow2 / airflow2**.
+5. Find **`customer_segmentation_pipeline`**, switch the toggle on, and click **▶ Trigger DAG**.
+6. Click the DAG name and open **Graph** or **Grid** to watch the run.
+7. To stop Airflow, press `Ctrl+C`, then run:
+   ```bash
+   docker compose down
+   ```
+
+### Testing each branch
+
+Click **▶ → Trigger DAG w/ config** and paste one of these:
+
+| Goal | Config | Expected result |
+|------|--------|-----------------|
+| Normal run | `{}` | Validation passes, 3 models train, then `promote_model` runs |
+| Force a data-quality failure | `{"min_rows": 100000}` | `data_quality_alert` runs; training tasks are **skipped** (pink) |
+| Force the quality gate to reject | `{"silhouette_threshold": 0.99}` | `reject_model` runs; `promote_model` is skipped |
+
+---
+
+## 6. What a successful run looks like
+
+- In the **Graph view**, the tasks on the path taken are **green** and the branch not taken is **pink (skipped)**. `generate_report` is always green.
+- In the **logs** of `select_best_model_task`, there is a ranking of the three models and a line naming the best one.
+- **Files created** in `dags/`:
+  - `model/model.sav` (the original lab's KMeans model), `model/kmeans.sav`, `model/minibatch_kmeans.sav`, `model/gaussian_mixture.sav`, `model/scaler.sav`
+  - `model/production_model.sav` and `model/production_model_meta.json` (only when the model is promoted)
+  - `reports/pipeline_report_<timestamp>.json`, a full run summary
+  - `reports/data_quality_alert_<timestamp>.json` (only when validation fails)
+
+### Screenshots
+
+| Description | Screenshot |
+|---|---|
+| Successful run (Graph view) | ![graph](assets/graph_success.png) |
+| Data-quality failure branch | ![alert](assets/graph_alert.png) |
+| Quality gate rejecting the model | ![reject](assets/graph_reject.png) |
+| Model comparison in the logs | ![logs](assets/select_best_logs.png) |
+| Elbow method result (original task) | ![elbow](assets/elbow_logs.png) |
+| Pipeline report JSON | ![report](assets/report_json.png) |
+
+---
+
+## 7. Project structure
+
+```
+Lab_1/
 ├── dags/
-│   ├── airflow.py     # Your DAG script
-├── src/
-│   ├── lab.py                # Data processing and modeling functions
-├── data/                       # Directory for data (if needed)
-├── docker-compose.yaml         # Docker Compose configuration
+│   ├── airflow.py          # DAG: branching, TaskGroup, quality gate, report
+│   ├── src/lab.py          # ML + validation functions
+│   ├── data/file.csv       # input dataset
+│   ├── model/              # created at runtime
+│   └── reports/            # created at runtime
+├── assets/                 # screenshots for this README
+├── docker-compose.yaml
+└── README.md
 ```
 
-#### Step 2: Docker Compose Configuration
-Create a docker-compose.yaml file in the project root directory. This file defines the services and configurations for running Airflow in a Docker container.
+---
 
-#### Step 3: Start the Docker containers by running the following command
+## 8. Troubleshooting
 
-```plaintext
-docker compose up
-```
-
-Wait until you see the log message indicating that the Airflow webserver is running:
-
-```plaintext
-app-airflow-webserver-1 | 127.0.0.1 - - [17/Feb/2023:09:34:29 +0000] "GET /health HTTP/1.1" 200 141 "-" "curl/7.74.0"
-```
-
-#### Step 4: Access Airflow Web Interface
-- Open a web browser and navigate to http://localhost:8080.
-
-- Log in with the credentials set in the .env file or use the default credentials (username: admin, password: admin).
-
-- Once logged in, you'll be on the Airflow web interface.
-
-#### Step 5: Trigger the DAG
-- In the Airflow web interface, navigate to the "DAGs" page.
-
-- You should see the "your_python_dag" listed.
-
-- To manually trigger the DAG, click on the "Trigger DAG" button or enable the DAG by toggling the switch to the "On" position.
-
-- Monitor the progress of the DAG in the Airflow web interface. You can view logs, task status, and task execution details.
-
-#### Step 6: Pipeline Outputs
-
-- Once the DAG completes its execution, check any output or artifacts produced by your functions and tasks. 
+| Problem | Fix |
+|---------|-----|
+| `port 8080 is already allocated` | Another program is using port 8080. Stop it, or run `docker compose down` and try again. |
+| DAG does not appear in the UI | Wait about 30 seconds, then check the **Import errors** banner at the top of the DAGs page. |
+| `ModuleNotFoundError: sklearn` or `kneed` | Make sure `_PIP_ADDITIONAL_REQUIREMENTS` in `docker-compose.yaml` includes `pandas scikit-learn kneed`, then rerun `docker compose up`. |
+| Containers keep restarting | Docker does not have enough memory. Give it at least 4 GB. |
+| `FileNotFoundError: file.csv` | The dataset must be at `dags/data/file.csv`. |
