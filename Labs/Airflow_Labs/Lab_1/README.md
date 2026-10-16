@@ -49,7 +49,7 @@ Tasks from the original lab: `load_data_task`, `data_preprocessing_task`, `build
 | 3 | **Automatic model selection** | `select_best_model()` | Pulls all three results from XCom and picks the model with the highest silhouette score. The original elbow result is still computed and is included in the final report for comparison. |
 | 4 | **Quality gate (second branch)** | `quality_gate()`, `promote_model()`, `reject_model()` | The best model is copied to `model/production_model.sav`, with a metadata JSON, **only** if its silhouette score is at least the threshold. Otherwise it is rejected and the production model stays unchanged. |
 | 5 | **Trigger rule for the join** | `generate_report` task | Uses `none_failed_min_one_success`, so the final report runs no matter which branch was taken. |
-| 6 | **Runtime parameters** | `params` in the DAG | `min_rows`, `max_null_ratio`, and `silhouette_threshold` can be changed from the UI with **Trigger DAG w/ config**, with no code edits. |
+| 6 | **Runtime parameters** | `params` in the DAG | `min_rows`, `max_null_ratio`, and `silhouette_threshold` can be changed in the trigger form in the UI (▶ Trigger DAG), with no code edits. |
 | 7 | **Reliability** | `default_args` | 2 retries with a 1-minute delay, plus an `on_failure_callback` that logs which task failed. |
 | 8 | **JSON-safe XCom** | `dags/src/lab.py` | Data moves between tasks as JSON instead of pickled objects, so XCom pickling no longer has to be enabled. |
 | 9 | **Preprocessing** | `data_preprocessing()` | Uses `StandardScaler` instead of `MinMaxScaler`, and saves the scaler to `model/scaler.sav`. |
