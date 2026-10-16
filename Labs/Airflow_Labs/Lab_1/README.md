@@ -129,13 +129,15 @@ The Python packages are installed inside the containers, so there's no `requirem
 
 ### Testing each branch
 
-Click **▶ → Trigger DAG w/ config** and paste one of these:
+Click **▶ (Trigger DAG)**. Because the DAG has `params`, Airflow 2.9 shows a form with `min_rows`, `max_null_ratio`, and `silhouette_threshold`. Change the values as below (or expand **"Generated Configuration JSON and Dagrun Options"** and paste the JSON), then click **Trigger**:
 
 | Goal | Config | Expected result |
 |------|--------|-----------------|
-| Normal run | `{}` | Validation passes, 3 models train, then `promote_model` runs |
+| Normal run | `{}` (keep the defaults) | Validation passes, 3 models train, then `promote_model` runs |
 | Force a data-quality failure | `{"min_rows": 100000}` | `data_quality_alert` runs; training tasks are **skipped** (pink) |
-| Force the quality gate to reject | `{"silhouette_threshold": 0.99}` | `reject_model` runs; `promote_model` is skipped |
+| Force the quality gate to reject | `{"min_rows": 100, "silhouette_threshold": 0.99}` | `reject_model` runs; `promote_model` is skipped |
+
+To check which run you are looking at, click that run's bar at the top of the grid before opening the **Graph** tab. To read a task's logs, click the task's **square** in the grid (not its name), then open **Logs**.
 
 ---
 
@@ -158,7 +160,18 @@ Click **▶ → Trigger DAG w/ config** and paste one of these:
 | Quality gate rejecting the model | ![reject](assets/graph_reject.png) |
 | Model comparison in the logs | ![logs](assets/select_best_logs.png) |
 | Elbow method result (original task) | ![elbow](assets/elbow_logs.png) |
-| Pipeline report JSON | ![report](assets/report_json.png) |
+| Pipeline report JSON (validation, elbow result, best model) | ![report](assets/report_json.png) |
+| Pipeline report JSON (quality gate decision and promoted model) | ![report2](assets/report_json_2.png) |
+
+### Results from my runs
+
+| Run | Config | Path taken | Result |
+|-----|--------|-----------|--------|
+| 1 | defaults | validate → train (3 models in parallel) → select → **promote** | Best model **KMeans, k = 2, silhouette 0.5462** (MiniBatchKMeans 0.5453, Gaussian Mixture 0.4077). Promoted to `production_model.sav`. Run time about 1 min 16 s. |
+| 2 | `min_rows = 100000` | validate → **data_quality_alert** | Validation failed on purpose (8,950 rows < 100,000). All training tasks were skipped, and the report was still written. |
+| 3 | `silhouette_threshold = 0.99` | validate → train → select → **reject** | 0.5462 < 0.99, so the model was rejected. `production_model.sav` kept its timestamp from Run 1, which shows the production model was left unchanged. |
+
+The original elbow method (`load_model_task`) suggested **k = 4**, while the silhouette score picked **k = 2**. Both are recorded in the pipeline report for comparison.
 
 ---
 
@@ -169,11 +182,14 @@ Lab_1/
 ├── dags/
 │   ├── airflow.py          # DAG: branching, TaskGroup, quality gate, report
 │   ├── src/lab.py          # ML + validation functions
+│   ├── src/__init__.py
 │   ├── data/file.csv       # input dataset
+│   ├── data/test.csv       # test data from the original lab
 │   ├── model/              # created at runtime
 │   └── reports/            # created at runtime
 ├── assets/                 # screenshots for this README
-├── docker-compose.yaml
+├── .gitignore              # keeps logs, models and reports out of git
+├── docker-compose.yaml     # Airflow 2.9.2 with this lab's settings
 └── README.md
 ```
 
@@ -188,3 +204,5 @@ Lab_1/
 | `ModuleNotFoundError: sklearn` or `kneed` | Make sure `_PIP_ADDITIONAL_REQUIREMENTS` in `docker-compose.yaml` includes `pandas scikit-learn kneed`, then rerun `docker compose up`. |
 | Containers keep restarting | Docker does not have enough memory. Give it at least 4 GB. |
 | `FileNotFoundError: file.csv` | The dataset must be at `dags/data/file.csv`. |
+| `ModuleNotFoundError: No module named 'airflow.providers.standard'` | That import only exists in Airflow 3. This lab's `airflow.py` already falls back to the Airflow 2 import, so this only happens with the course's original DAG file on Airflow 2.9.2. |
+| The run used the old parameter values | After typing in the trigger form, click elsewhere on the page and check the generated JSON before clicking **Trigger**. |
