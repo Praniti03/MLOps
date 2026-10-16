@@ -1,34 +1,31 @@
-name: Testing Github Lab1 Python Unittests
+name: Python Unittests
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: 3.8
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
 
-    - name: Install dependencies
-      run: pip install -r Labs/Github_Labs/Lab1/requirements.txt
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
 
-    - name: Run unittests
-      run: python -m unittest Labs/Github_Labs/Lab1/test/test_unittest.py
+      - name: Run unittests
+        run: python -m unittest test.test_unittest
 
+      - name: Notify on success
+        if: success()
+        run: echo "Unit tests passed successfully"
 
-    - name: Notify on success
-      if: success()
-      run: echo "Unit tests passed successfully"
-
-    - name: Notify on failure
-      if: failure()
-      run: echo "Unit tests failed"
+      - name: Notify on failure
+        if: failure()
+        run: echo "Unit tests failed"

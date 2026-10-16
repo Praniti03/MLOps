@@ -1,0 +1,10 @@
+=== Bank Account System — Example Output ===
+
+1. Deposit 500 into 1000 -> 1500
+2. Withdraw 300 -> 1200
+3. Interest on 1200 at 5% for 2 years -> 123.0
+4. Overdraft fee applied to -20 balance -> -55
+5. Transfer 150 from account A to B -> A: 1050, B: 350
+6. Monthly loan payment on $10,000 at 6% for 12 months -> 860.66
+7. Convert $100 at rate 1.1 -> 110.0
+8. Does balance 1200 meet minimum? -> True

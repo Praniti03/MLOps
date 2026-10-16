@@ -1,42 +1,43 @@
-import sys
-import os
-import unittest
+import sys, os, unittest
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Get the path to the project's root directory
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.append(project_root)
+from src.bank_account import (
+    deposit, withdraw, calculate_interest, apply_overdraft_fee,
+    transfer_funds, calculate_monthly_loan_payment,
+    convert_currency, check_minimum_balance
+)
 
-from src import calculator
+class TestBankAccount(unittest.TestCase):
 
+    def test_deposit(self):
+        self.assertEqual(deposit(100, 50), 150)
 
-class TestCalculator(unittest.TestCase):
+    def test_deposit_negative_raises(self):
+        with self.assertRaises(ValueError):
+            deposit(100, -10)
 
-    def test_fun1(self):
-        self.assertEqual(calculator.fun1(2, 3), 5)
-        self.assertEqual(calculator.fun1(5, 0), 5)
-        
-        self.assertEqual(calculator.fun1(-1, 1), 0)
-        self.assertEqual(calculator.fun1(-1, -1), -2)
+    def test_withdraw(self):
+        self.assertEqual(withdraw(100, 50), 50)
 
-    def test_fun2(self):
-        self.assertEqual(calculator.fun2(2, 3), -1)
-        self.assertEqual(calculator.fun2(5, 0), 5)
-        self.assertEqual(calculator.fun2(-1, 1), -2)
-        self.assertEqual(calculator.fun2(-1, -1), 0)
+    def test_withdraw_insufficient_funds(self):
+        with self.assertRaises(ValueError):
+            withdraw(50, 100)
 
-    def test_fun3(self):
-        self.assertEqual(calculator.fun3(2, 3), 6)
-        self.assertEqual(calculator.fun3(5, 0), 0)
-        self.assertEqual(calculator.fun3(-1, 1), -1)
-        self.assertEqual(calculator.fun3(-1, -1), 1)
+    def test_calculate_interest(self):
+        self.assertEqual(calculate_interest(1000, 0.05, 1), 50.0)
 
-    def test_fun4(self):
-        self.assertEqual(calculator.fun4(2, 3, 5), 10)
-        self.assertEqual(calculator.fun4(5, 0, -1), 4)
-        self.assertEqual(calculator.fun4(-1, -1, -1), -3)
-        self.assertEqual(calculator.fun4(-1, -1, 100), 98)
+    def test_apply_overdraft_fee(self):
+        self.assertEqual(apply_overdraft_fee(-20), -55)
 
+    def test_transfer_funds(self):
+        self.assertEqual(transfer_funds(200, 50, 100), (100, 150))
 
+    def test_convert_currency(self):
+        self.assertEqual(convert_currency(100, 1.1), 110.0)
+
+    def test_check_minimum_balance(self):
+        self.assertTrue(check_minimum_balance(150))
+        self.assertFalse(check_minimum_balance(50))
 
 if __name__ == '__main__':
     unittest.main()
