@@ -1,38 +1,42 @@
-# Docker Lab 1 (Modified): Multi-Stage, Tested Training and Serving Containers
+# Airflow Lab 1 (Modified): Validated Multi-Model Customer Segmentation Pipeline
 
-The original lab builds one image that trains a RandomForest on the Iris dataset inside the container and saves the model there (where it is lost when the container exits):
+This lab builds on the course's Airflow Lab 1 (KMeans clustering on credit card customer data). The original DAG ran four tasks in a straight line:
 
 ```
-docker build -t lab1:v1 .
-docker save lab1:v1 > my_image.tar
-docker run lab1:v1
+load_data_task >> data_preprocessing_task >> build_save_model_task >> load_model_task
 ```
 
-**Those three commands still work exactly as before.** On top of them, this version changes **how the image is built and how the containers run**:
+All four original tasks are **kept**. I extended the **orchestration logic itself** around them, so the DAG now has these features:
 
-- A **multi-stage Dockerfile** with shared `base` layers and **two build targets**: a `train` image (the default, like the original) and a `serve` image (a prediction API).
-- A **`test` stage runs the unit tests during the build**, including a **model-quality check**. If a test fails, `docker build` fails and no image is produced.
-- **Build arguments** (`PYTHON_VERSION`, `MIN_ACCURACY`, `N_ESTIMATORS`) and **environment variables** configure the images without editing code.
-- **Docker Compose** runs the two containers in order: `train` saves the model into a **named volume**, and `serve` starts **only after training succeeds** and reads the model from that volume.
-- A **`HEALTHCHECK`** makes Docker report whether the API is actually working (`docker ps` shows `healthy`).
-- A slim base image, pinned dependencies, layer caching, a non-root user and a `.dockerignore`.
+- It **validates the data** and **branches**: training runs only if the data passes the checks. Otherwise an alert task runs.
+- It **trains three clustering algorithms in parallel** inside a TaskGroup.
+- It **automatically picks the best model** using the silhouette score.
+- A **quality gate** branches again and promotes the model to "production" only if it is good enough.
+- It **always writes a final JSON report**, whichever path the run took.
+- It uses **retries, a failure callback, and runtime parameters** that you can change when you trigger the DAG.
 
 ---
 
-## 1. How it fits together
+## 1. Pipeline overview
 
 ```mermaid
 flowchart LR
-    subgraph Dockerfile
-        base[base: python 3.11-slim + pinned deps + non-root user]
-        base --> test[test: pytest + accuracy >= MIN_ACCURACY]
-        test -. must pass .-> train[train target - default]
-        test -. must pass .-> serve[serve target + HEALTHCHECK]
+    start --> load_data_task --> validate_data_task
+    validate_data_task -- pass --> data_preprocessing_task
+    validate_data_task -- fail --> data_quality_alert
+    data_preprocessing_task --> build_save_model_task & train_minibatch_kmeans & train_gmm
+    subgraph train_models [TaskGroup: train_models]
+        build_save_model_task --> load_model_task
+        train_minibatch_kmeans
+        train_gmm
     end
-    train -- writes model.joblib --> vol[(named volume: model-store)]
-    vol -- read-only --> serve
-    serve -- port 8000 --> user[curl / browser]
+    load_model_task & train_minibatch_kmeans & train_gmm --> select_best_model_task --> quality_gate_task
+    quality_gate_task -- silhouette >= threshold --> promote_model
+    quality_gate_task -- silhouette < threshold --> reject_model
+    data_quality_alert & promote_model & reject_model --> generate_report
 ```
+
+Tasks from the original lab: `load_data_task`, `data_preprocessing_task`, `build_save_model_task`, `load_model_task`. Every other task is new.
 
 ---
 
@@ -40,201 +44,165 @@ flowchart LR
 
 | # | Change | File | What it does / why it matters |
 |---|--------|------|-------------------------------|
-| 1 | **Multi-stage build** | `Dockerfile` | One `base` stage holds the dependencies, and the `test`, `serve` and `train` stages build on it. Shared layers are built once and cached. |
-| 2 | **Two build targets from one Dockerfile** | `Dockerfile` | `--target train` builds the training job and `--target serve` builds the API. `train` is the last stage, so a plain `docker build` still produces the original training image. |
-| 3 | **Tests and a quality gate inside the build** | `Dockerfile` (`test` stage), `tests/test_lab.py` | 7 tests check that training writes the model files, that the API endpoints work and reject bad input, and that **accuracy ≥ `MIN_ACCURACY`**. The `train` and `serve` stages copy a file from the `test` stage, so the tests always run, and a failure stops the build. |
-| 4 | **Build arguments** | `Dockerfile` | `PYTHON_VERSION` (default 3.11), `MIN_ACCURACY` (default 0.85) and `N_ESTIMATORS` (default 100) can be changed with `--build-arg`. |
-| 5 | **Runtime configuration** | `src/main.py` | `MODEL_DIR`, `N_ESTIMATORS` and `TEST_SIZE` are read from environment variables, so you can retrain with different settings without rebuilding (`docker compose run -e ...`). |
-| 6 | **Multi-container setup with Compose** | `docker-compose.yml` | `serve` uses `depends_on: condition: service_completed_successfully`, so it only starts after `train` exits with code 0. |
-| 7 | **Named volume instead of a lost file** | `docker-compose.yml` | The model is saved to the `model-store` volume, which outlives the containers. `serve` mounts it **read-only**. This works the same on Windows, macOS and Linux (no host paths or user IDs needed). |
-| 8 | **Prediction API** | `src/serve.py` | `POST /predict` (one row or a batch, with input validation), `/version` (model metadata) and `/health`, served by `gunicorn`. |
-| 9 | **HEALTHCHECK** | `Dockerfile` (`serve` stage) | Docker calls `/health` every 10 seconds and marks the container `healthy` or `unhealthy`. |
-| 10 | **Smaller, safer image** | `Dockerfile`, `.dockerignore`, `src/requirements.txt` | `python:3.11-slim` instead of the full `python:3.10` image, pinned versions, dependencies installed before the code is copied (better caching), a non-root user, OCI labels, and a trimmed build context. |
-
-`src/main.py` keeps the original job (train a RandomForest on Iris and print `The model training was successful`), and now also saves a `metadata.json` file with the accuracy and settings.
+| 1 | **Data validation + branching** (`BranchPythonOperator`) | `dags/airflow.py`, `validate_data()` in `dags/src/lab.py` | Checks for the required columns, a minimum row count, and the null ratio. If the data fails, the DAG skips training and runs `data_quality_alert`, so a model is never trained on bad data. |
+| 2 | **Parallel training in a TaskGroup** | `dags/airflow.py`, `train_minibatch_kmeans()`, `train_gmm()` | The original KMeans task (`build_save_model_task`, followed by the elbow method in `load_model_task`) now runs **at the same time** as two new algorithms: MiniBatchKMeans and a Gaussian Mixture model. Each one searches k = 2–8. |
+| 3 | **Automatic model selection** | `select_best_model()` | Pulls all three results from XCom and picks the model with the highest silhouette score. The original elbow result is still computed and is included in the final report for comparison. |
+| 4 | **Quality gate (second branch)** | `quality_gate()`, `promote_model()`, `reject_model()` | The best model is copied to `model/production_model.sav`, with a metadata JSON, **only** if its silhouette score is at least the threshold. Otherwise it is rejected and the production model stays unchanged. |
+| 5 | **Trigger rule for the join** | `generate_report` task | Uses `none_failed_min_one_success`, so the final report runs no matter which branch was taken. |
+| 6 | **Runtime parameters** | `params` in the DAG | `min_rows`, `max_null_ratio`, and `silhouette_threshold` can be changed from the UI with **Trigger DAG w/ config**, with no code edits. |
+| 7 | **Reliability** | `default_args` | 2 retries with a 1-minute delay, plus an `on_failure_callback` that logs which task failed. |
+| 8 | **JSON-safe XCom** | `dags/src/lab.py` | Data moves between tasks as JSON instead of pickled objects, so XCom pickling no longer has to be enabled. |
+| 9 | **Preprocessing** | `data_preprocessing()` | Uses `StandardScaler` instead of `MinMaxScaler`, and saves the scaler to `model/scaler.sav`. |
 
 ---
 
-## 3. What to install
+## 3. Prerequisites (install these first)
 
-| Tool | Version I used | Install |
-|------|----------------|---------|
-| Docker Desktop (includes Docker Compose v2) | 4.x (with **WSL 2** on Windows) | https://www.docker.com/products/docker-desktop |
+| Tool | Version I used | Where to get it |
+|------|----------------|-----------------|
 | Git | 2.42+ | https://git-scm.com |
-| `curl` | any | Built into Windows 10/11, macOS and Linux |
+| Docker Desktop | 4.x (with **WSL 2** on Windows), running Airflow image **2.9.2** | https://www.docker.com/products/docker-desktop |
+| A web browser | any | |
 
-You do **not** need Python on your machine. Everything runs inside the containers.
+You do **not** need to install Python or Airflow on your machine, because everything runs inside Docker.
 
-Check that Docker is running:
-```bash
-docker --version
-docker compose version
-docker info
-```
-`docker info` must show a **Server** section. If it says it cannot connect, open Docker Desktop and wait for **Engine running**.
-
-On **Windows**, use **Command Prompt** (not PowerShell) for the commands below. PowerShell replaces `curl` with a different command and can corrupt files written with `>`.
+Docker needs **at least 4 GB of memory**, and 8 GB is recommended. On Windows with WSL 2, Docker uses the memory available to WSL.
 
 ---
 
-## 4. Get the code
+## 4. Setup
 
 ```bash
+# 1. Clone the repo
 git clone https://github.com/Praniti03/MLOps.git
-cd MLOps/Labs/Docker_Labs/Lab1
+cd MLOps/Labs/Airflow_Labs/Lab_1
+
+# 2. (Only if docker-compose.yaml is missing) download Airflow 2.9.2's compose file
+#    Windows:     curl -o docker-compose.yaml https://airflow.apache.org/docs/apache-airflow/2.9.2/docker-compose.yaml
+#    Mac/Linux:   curl -LfO 'https://airflow.apache.org/docs/apache-airflow/2.9.2/docker-compose.yaml'
+
+# 3. Create the folders Airflow mounts
+mkdir logs plugins config working_data     # ignore "already exists" messages
+
+# 4. Tell Airflow which user ID to run as
+#    Windows (Command Prompt):
+echo AIRFLOW_UID=50000> .env
+#    Mac/Linux:
+# echo -e "AIRFLOW_UID=$(id -u)" > .env
 ```
-All commands below run from this folder.
+
+Then check these lines in `docker-compose.yaml` (the same edits as in the original lab's instructions):
+
+```yaml
+AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+_PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:- pandas scikit-learn kneed}
+_AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow2}
+_AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow2}
+# under volumes:
+- ${AIRFLOW_PROJ_DIR:-.}/working_data:/opt/airflow/working_data
+```
+
+The Python packages are installed inside the containers, so there's no `requirements.txt` to install locally. Built for **Airflow 2.9.2** (the version used in the course blog).
 
 ---
 
-## 5. The original commands (still work)
+## 5. Run the pipeline
 
-```bash
-docker build -t lab1:v1 .
-docker save -o my_image.tar lab1:v1
-docker run --rm lab1:v1
-```
-`docker save -o` is the same as `docker save lab1:v1 > my_image.tar`, but it also works safely in PowerShell.
+1. **Start Docker Desktop** and wait for "Engine running".
+2. **Initialize Airflow** (first time only):
+   ```bash
+   docker compose up airflow-init
+   ```
+   Wait until it exits with code 0.
+3. **Start Airflow:**
+   ```bash
+   docker compose up
+   ```
+   Leave this terminal open. Airflow is ready when the logs show the webserver answering `/health` requests with status `200`.
+4. Open **http://localhost:8080** and log in with **airflow2 / airflow2**.
+5. Find **`customer_segmentation_pipeline`**, switch the toggle on, and click **▶ Trigger DAG**.
+6. Click the DAG name and open **Graph** or **Grid** to watch the run.
+7. To stop Airflow, press `Ctrl+C`, then run:
+   ```bash
+   docker compose down
+   ```
 
-**Expected output** of `docker run`: the build log shows the test stage with **`7 passed`**, and the container prints:
-```
-Trained RandomForest with 100 trees, test accuracy 0.9000
-Model saved to /models/model.joblib
-The model training was successful
-```
+### Testing each branch
 
----
+Click **▶ (Trigger DAG)**. Because the DAG has `params`, Airflow 2.9 shows a form with `min_rows`, `max_null_ratio`, and `silhouette_threshold`. Change the values as below (or expand **"Generated Configuration JSON and Dagrun Options"** and paste the JSON), then click **Trigger**:
 
-## 6. The quality gate: a build that fails on purpose
+| Goal | Config | Expected result |
+|------|--------|-----------------|
+| Normal run | `{}` (keep the defaults) | Validation passes, 3 models train, then `promote_model` runs |
+| Force a data-quality failure | `{"min_rows": 100000}` | `data_quality_alert` runs; training tasks are **skipped** (pink) |
+| Force the quality gate to reject | `{"min_rows": 100, "silhouette_threshold": 0.99}` | `reject_model` runs; `promote_model` is skipped |
 
-Raise the required accuracy above what the model reaches:
-```bash
-docker build --build-arg MIN_ACCURACY=0.99 -t lab1:strict .
-```
-**Expected result:** the build **fails** in the `test` stage with `FAILED tests/test_lab.py::test_model_meets_quality_bar` and `Accuracy 0.9 is below MIN_ACCURACY=0.99`. No `lab1:strict` image is created. This is the point: an image whose model is not good enough is never built.
-
----
-
-## 7. Train and serve with Docker Compose
-
-```bash
-docker compose up --build -d
-```
-This builds both targets, runs `train`, waits for it to finish, then starts `serve` in the background.
-
-Check the containers:
-```bash
-docker compose ps -a
-docker compose logs train
-```
-`train` shows **`Exited (0)`** and its log ends with `The model training was successful`. After about 15 seconds, `serve` shows **`Up ... (healthy)`**.
-
-Call the API.
-
-**Windows (Command Prompt):**
-```cmd
-curl http://localhost:8000/
-curl http://localhost:8000/health
-curl http://localhost:8000/version
-curl -X POST http://localhost:8000/predict -H "Content-Type: application/json" -d "{\"features\": [5.1, 3.5, 1.4, 0.2]}"
-curl -X POST http://localhost:8000/predict -H "Content-Type: application/json" -d "{\"instances\": [[5.1, 3.5, 1.4, 0.2], [6.7, 3.0, 5.2, 2.3]]}"
-curl -X POST http://localhost:8000/predict -H "Content-Type: application/json" -d "{\"features\": [1, 2]}"
-```
-
-**Mac/Linux:**
-```bash
-curl http://localhost:8000/
-curl http://localhost:8000/health
-curl http://localhost:8000/version
-curl -X POST http://localhost:8000/predict -H "Content-Type: application/json" -d '{"features": [5.1, 3.5, 1.4, 0.2]}'
-curl -X POST http://localhost:8000/predict -H "Content-Type: application/json" -d '{"instances": [[5.1, 3.5, 1.4, 0.2], [6.7, 3.0, 5.2, 2.3]]}'
-curl -X POST http://localhost:8000/predict -H "Content-Type: application/json" -d '{"features": [1, 2]}'
-```
-
-**Expected:** `/version` shows `"n_estimators": 100` and `"test_accuracy": 0.9`. The first prediction is `setosa`, the batch returns `setosa` and `virginica`, and the last call returns an **error message** (`Row 0 must be a list of 4 numbers`) because the input is invalid.
-
-### Retrain without rebuilding
-
-Run the training container again with a different setting, then restart the API so it loads the new model from the volume:
-```bash
-docker compose run --rm -e N_ESTIMATORS=300 train
-docker compose restart serve
-curl http://localhost:8000/version
-```
-`/version` now shows **`"n_estimators": 300`** and a new `trained_at` time. Nothing was rebuilt: the volume carried the new model from one container to the other.
-
-### Inspect what Docker created
-
-```bash
-docker images lab1*
-docker volume ls
-docker inspect --format "{{.State.Health.Status}}" lab1-serve-1
-```
-The last command prints `healthy`. If the container name is different, find it with `docker compose ps`.
+To check which run you are looking at, click that run's bar at the top of the grid before opening the **Graph** tab. To read a task's logs, click the task's **square** in the grid (not its name), then open **Logs**.
 
 ---
 
-## 8. What a successful run looks like
+## 6. What a successful run looks like
 
-| Step | Expected result |
-|------|-----------------|
-| `docker build -t lab1:v1 .` | Test stage shows **7 passed**, image built |
-| `docker run --rm lab1:v1` | `The model training was successful` |
-| `docker build --build-arg MIN_ACCURACY=0.99 ...` | **Build fails** at `test_model_meets_quality_bar` (expected) |
-| `docker compose up --build -d` | `train` → `Exited (0)`, `serve` → `Up (healthy)` |
-| `POST /predict` | `setosa` for `[5.1, 3.5, 1.4, 0.2]`, `400` error for bad input |
-| Retrain with `N_ESTIMATORS=300` | `/version` shows `300` trees |
+- In the **Graph view**, the tasks on the path taken are **green** and the branch not taken is **pink (skipped)**. `generate_report` is always green.
+- In the **logs** of `select_best_model_task`, there is a ranking of the three models and a line naming the best one.
+- **Files created** in `dags/`:
+  - `model/model.sav` (the original lab's KMeans model), `model/kmeans.sav`, `model/minibatch_kmeans.sav`, `model/gaussian_mixture.sav`, `model/scaler.sav`
+  - `model/production_model.sav` and `model/production_model_meta.json` (only when the model is promoted)
+  - `reports/pipeline_report_<timestamp>.json`, a full run summary
+  - `reports/data_quality_alert_<timestamp>.json` (only when validation fails)
 
 ### Screenshots
 
 | Description | Screenshot |
 |---|---|
-| Build with the test stage: 7 passed | ![tests](assets/build_tests.png) |
-| Original commands: build, save, run | ![original](assets/original_commands.png) |
-| Quality gate: build fails with MIN_ACCURACY=0.99 | ![gate](assets/quality_gate_fail.png) |
-| Compose: train exited (0), serve healthy | ![compose](assets/compose_ps.png) |
-| API calls: predict, batch and validation error | ![predict](assets/predict.png) |
-| Retrained with 300 trees, no rebuild | ![retrain](assets/retrain.png) |
-| Images and volume | ![images](assets/images_volume.png) |
+| Successful run (Graph view) | ![graph](assets/graph_success.png) |
+| Data-quality failure branch | ![alert](assets/graph_alert.png) |
+| Quality gate rejecting the model | ![reject](assets/graph_reject.png) |
+| Model comparison in the logs | ![logs](assets/select_best_logs.png) |
+| Elbow method result (original task) | ![elbow](assets/elbow_logs.png) |
+| Pipeline report JSON (validation, elbow result, best model) | ![report](assets/report_json.png) |
+| Pipeline report JSON (quality gate decision and promoted model) | ![report2](assets/report_json_2.png) |
+
+### Results from my runs
+
+| Run | Config | Path taken | Result |
+|-----|--------|-----------|--------|
+| 1 | defaults | validate → train (3 models in parallel) → select → **promote** | Best model **KMeans, k = 2, silhouette 0.5462** (MiniBatchKMeans 0.5453, Gaussian Mixture 0.4077). Promoted to `production_model.sav`. Run time about 1 min 16 s. |
+| 2 | `min_rows = 100000` | validate → **data_quality_alert** | Validation failed on purpose (8,950 rows < 100,000). All training tasks were skipped, and the report was still written. |
+| 3 | `silhouette_threshold = 0.99` | validate → train → select → **reject** | 0.5462 < 0.99, so the model was rejected. `production_model.sav` kept its timestamp from Run 1, which shows the production model was left unchanged. |
+
+The original elbow method (`load_model_task`) suggested **k = 4**, while the silhouette score picked **k = 2**. Both are recorded in the pipeline report for comparison.
 
 ---
 
-## 9. Clean up
-
-```bash
-docker compose down -v
-docker rmi lab1:v1 lab1-train:v2 lab1-serve:v2
-```
-`-v` also deletes the `model-store` volume. You can delete `my_image.tar` as well.
-
----
-
-## 10. Project structure
+## 7. Project structure
 
 ```
-Lab1/
-├── Dockerfile            # multi-stage: base -> test -> serve / train
-├── docker-compose.yml    # train then serve, sharing a named volume
-├── .dockerignore         # keeps the build context small
-├── src/
-│   ├── main.py           # training job (original entry point, now configurable)
-│   ├── serve.py          # prediction API
-│   └── requirements.txt  # pinned dependencies
-├── tests/
-│   └── test_lab.py       # 7 tests, run inside the Docker build
-├── assets/               # screenshots for this README
+Lab_1/
+├── dags/
+│   ├── airflow.py          # DAG: branching, TaskGroup, quality gate, report
+│   ├── src/lab.py          # ML + validation functions
+│   ├── src/__init__.py
+│   ├── data/file.csv       # input dataset
+│   ├── data/test.csv       # test data from the original lab
+│   ├── model/              # created at runtime
+│   └── reports/            # created at runtime
+├── assets/                 # screenshots for this README
+├── .gitignore              # keeps logs, models and reports out of git
+├── docker-compose.yaml     # Airflow 2.9.2 with this lab's settings
 └── README.md
 ```
 
 ---
 
-## 11. Troubleshooting
+## 8. Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
-| `Cannot connect to the Docker daemon` | Open Docker Desktop and wait for **Engine running**. |
-| Build fails at `test_model_meets_quality_bar` | The model is below `MIN_ACCURACY`. This is intended when you pass a high value. Use the default (0.85). |
-| `serve` keeps restarting | It started before a model existed. Run `docker compose down -v` and then `docker compose up --build -d` so `train` runs first. |
-| `port is already allocated` (8000) | Another program uses port 8000. Stop it, or change `"8000:8000"` to `"8001:8000"` in `docker-compose.yml` and use port 8001. |
-| `curl` errors in PowerShell | Use **Command Prompt**, or type `curl.exe` instead of `curl`. |
-| `serve` shows `(health: starting)` | Wait about 15 seconds; the first health check runs after the start period. |
+| `port 8080 is already allocated` | Another program is using port 8080. Stop it, or run `docker compose down` and try again. |
+| DAG does not appear in the UI | Wait about 30 seconds, then check the **Import errors** banner at the top of the DAGs page. |
+| `ModuleNotFoundError: sklearn` or `kneed` | Make sure `_PIP_ADDITIONAL_REQUIREMENTS` in `docker-compose.yaml` includes `pandas scikit-learn kneed`, then rerun `docker compose up`. |
+| Containers keep restarting | Docker does not have enough memory. Give it at least 4 GB. |
+| `FileNotFoundError: file.csv` | The dataset must be at `dags/data/file.csv`. |
+| `ModuleNotFoundError: No module named 'airflow.providers.standard'` | That import only exists in Airflow 3. This lab's `airflow.py` already falls back to the Airflow 2 import, so this only happens with the course's original DAG file on Airflow 2.9.2. |
+| The run used the old parameter values | After typing in the trigger form, click elsewhere on the page and check the generated JSON before clicking **Trigger**. |
