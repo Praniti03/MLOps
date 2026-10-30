@@ -1,0 +1,31 @@
+# Two containers built from the same Dockerfile:
+#   train  runs once, saves the model into the "model-store" volume, then exits
+#   serve  starts only after train exits successfully, and reads the model
+#          from the same volume (read-only)
+services:
+  train:
+    build:
+      context: .
+      target: train
+      args:
+        N_ESTIMATORS: "100"
+    image: lab1-train:v2
+    volumes:
+      - model-store:/models
+
+  serve:
+    build:
+      context: .
+      target: serve
+    image: lab1-serve:v2
+    depends_on:
+      train:
+        condition: service_completed_successfully
+    ports:
+      - "8000:8000"
+    volumes:
+      - model-store:/models:ro
+    restart: unless-stopped
+
+volumes:
+  model-store:

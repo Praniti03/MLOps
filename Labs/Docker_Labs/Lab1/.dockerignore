@@ -1,0 +1,10 @@
+.git
+.gitignore
+assets/
+*.tar
+README.md
+docker-compose.yml
+Dockerfile.original
+**/__pycache__
+**/*.pyc
+.pytest_cache
